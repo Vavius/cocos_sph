@@ -10,7 +10,7 @@
 // Import the interfaces
 #import "IntroLayer.h"
 #import "HelloWorldLayer.h"
-
+#import "SPHNode.h"
 
 #pragma mark - IntroLayer
 
@@ -61,6 +61,9 @@
 -(void) onEnter
 {
 	[super onEnter];
-	[[CCDirector sharedDirector] replaceScene:[CCTransitionFade transitionWithDuration:1.0 scene:[HelloWorldLayer scene] ]];
+    CCScene *next = [CCScene node];
+    SPHNode *sph = [SPHNode node];
+    [next addChild: sph];
+	[[CCDirector sharedDirector] replaceScene:[CCTransitionFade transitionWithDuration:1.0 scene:next ]];
 }
 @end
