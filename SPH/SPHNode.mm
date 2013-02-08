@@ -8,12 +8,9 @@
 
 #import "SPHNode.h"
 
-/*
-class QueryWorldInteractions : b2QueryCallback {
-    bool ReportFixture(b2Fixture* fixture);
-    
-    QueryWorldInteractions();
-};
+
+bool ParticleSolidCollision(b2Fixture* fixture, b2Vec2& particlePos, b2Vec2& nearestPos, b2Vec2& impactNormal);
+void SeparateParticleFromBody(int particleIdx, b2Vec2& nearestPos, b2Vec2& normal, sParticle *liquid);
 
 bool QueryWorldInteractions::ReportFixture(b2Fixture* fixture) {
     // electrodruid: Handy debug code to show which grid cells are being considered.
@@ -32,104 +29,125 @@ bool QueryWorldInteractions::ReportFixture(b2Fixture* fixture) {
     // 					m_debugDraw.DrawSegment(v3, v4, red);
     // 					m_debugDraw.DrawSegment(v4, v1, red);
     
-    // Iterate through all the shapes in this cell
-        b2Shape* pShape = mNeighboursBuffer[shapeIdx];
+    
+    int numParticles = hashGridList[x][y].GetSize();
+    hashGridList[x][y].ResetIterator();
+    
+    // Iterate through all the particles in this cell
+    for(int i = 0; i < numParticles; i++)
+    {
+        int particleIdx = hashGridList[x][y].GetNext();
         
-        int numParticles = hashGridList[x][y].GetSize();
-        hashGridList[x][y].ResetIterator();
-        
-        // Iterate through all the particles in this cell
-        for(int i = 0; i < numParticles; i++)
+        b2Vec2 particlePos = liquid[particleIdx].mPosition;
+        if(fixture->GetBody()->GetType() == b2_staticBody)
         {
-            int particleIdx = hashGridList[x][y].GetNext();
+            b2Vec2 nearestPos(0,0);
+            b2Vec2 normal(0,0);
             
-            b2Vec2 particlePos = liquid[particleIdx].mPosition;
-            if(pShape->GetBody()->IsStatic())
+            // electrodruid TODO: moving particles out to the nearest edge in this way
+            // can cause leaking and tunnelling, particularly for high-velocity particles.
+            // Perhaps some kind of approach involving raycasting between the old particle
+            // position and the current one would work better?
+            bool inside = ParticleSolidCollision(fixture, particlePos, nearestPos, normal);
+            
+            if (inside)
             {
-                b2Vec2 nearestPos(0,0);
-                b2Vec2 normal(0,0);
-                
-                // electrodruid TODO: moving particles out to the nearest edge in this way
-                // can cause leaking and tunnelling, particularly for high-velocity particles.
-                // Perhaps some kind of approach involving raycasting between the old particle
-                // position and the current one would work better?
-                bool inside = ParticleSolidCollision(pShape, particlePos, nearestPos, normal);
-                
-                if (inside)
-                {
-                    SeparateParticleFromBody(particleIdx, nearestPos, normal);
-                }
+                SeparateParticleFromBody(particleIdx, nearestPos, normal, liquid);
             }
-            else
+        }
+        else
+        {
+            b2Vec2 nearestPos(0,0);
+            b2Vec2 normal(0,0);
+            bool inside = ParticleSolidCollision(fixture, particlePos, nearestPos, normal);
+            
+            if (inside)
             {
-                b2Vec2 nearestPos(0,0);
-                b2Vec2 normal(0,0);
-                bool inside = ParticleSolidCollision(pShape, particlePos, nearestPos, normal);
+                b2Vec2 particleVelocity = liquid[particleIdx].mVelocity;
                 
-                if (inside)
-                {
-                    b2Vec2 particleVelocity = liquid[particleIdx].mVelocity;
-                    
-                    // electrodruid: I think this does need to be here
-                    particleVelocity *= deltaT;
-                    // electrodruid: not sure if this should be here
-                    //									particleVelocity *= liquid[particleIdx].mMass;
-                    
-                    // electrodruid: Still not sure exactly what the paper meant by
-                    // "intersection position", but taking the current particle position
-                    // seems to give the least-bad results
-                    b2Vec2 impulsePos = particlePos;
-                    //									b2Vec2 impulsePos = nearestPos;
-                    
-                    b2Vec2 pointVelocity = pShape->GetBody()->GetLinearVelocityFromWorldPoint(impulsePos);
-                    b2Vec2 pointVelocityAbsolute = pointVelocity;
-                    // electrodruid: I think this does need to be here
-                    pointVelocity *= deltaT;
-                    
-                    b2Vec2 relativeVelocity = particleVelocity - pointVelocity;
-                    
-                    b2Vec2 pointVelNormal = normal;
-                    pointVelNormal *= b2Dot(relativeVelocity, normal);
-                    b2Vec2 pointVelTangent = relativeVelocity - pointVelNormal;
-                    
-                    // Should be a value between 0.0f and 1.0f
-                    const float slipFriction = 0.3f;
-                    
-                    pointVelTangent *= slipFriction;
-                    b2Vec2 impulse = pointVelNormal - pointVelTangent;
-                    
-                    // electrodruid: not sure if this should be here
-                    //									impulse *= deltaT;
-                    
-                    // electrodruid: Don't know if this should be a force or an impulse...
-                    pShape->GetBody()->ApplyImpulse(impulse, impulsePos);
-                    //									 pShape->GetBody()->ApplyForce(impulse, impulsePos);
-                    
-                    // electrodruid: Bodies with low mass don't float, they just spin too
-                    // fast because of low rotational inertia. As well as fudging for the
-                    // spinning, try to add buoyancy by adding a force to negate (some of)
-                    // the gravity affecting the body. This needs to be tuned properly
-                    // for different bodies
-                    b2Vec2 buoyancy = -m_world->GetGravity();
-                    const float buoyancyAdjuster = 0.5f;
-                    buoyancy *= buoyancyAdjuster;
-                    
-                    pShape->GetBody()->ApplyForce(buoyancy, pShape->GetBody()->GetPosition());
-                    
-                    // move the particles away from the body
+                // electrodruid: I think this does need to be here
+                particleVelocity *= deltaT;
+                // electrodruid: not sure if this should be here
+                //									particleVelocity *= liquid[particleIdx].mMass;
+                
+                // electrodruid: Still not sure exactly what the paper meant by
+                // "intersection position", but taking the current particle position
+                // seems to give the least-bad results
+                b2Vec2 impulsePos = particlePos;
+                //									b2Vec2 impulsePos = nearestPos;
+                
+                b2Vec2 pointVelocity = fixture->GetBody()->GetLinearVelocityFromWorldPoint(impulsePos);
+                b2Vec2 pointVelocityAbsolute = pointVelocity;
+                // electrodruid: I think this does need to be here
+                pointVelocity *= deltaT;
+                
+                b2Vec2 relativeVelocity = particleVelocity - pointVelocity;
+                
+                b2Vec2 pointVelNormal = normal;
+                pointVelNormal *= b2Dot(relativeVelocity, normal);
+                b2Vec2 pointVelTangent = relativeVelocity - pointVelNormal;
+                
+                // Should be a value between 0.0f and 1.0f
+                const float slipFriction = 0.3f;
+                
+                pointVelTangent *= slipFriction;
+                b2Vec2 impulse = pointVelNormal - pointVelTangent;
+                
+                // electrodruid: not sure if this should be here
+                //									impulse *= deltaT;
+                
+                // electrodruid: Don't know if this should be a force or an impulse...
+                fixture->GetBody()->ApplyLinearImpulse(impulse, impulsePos);
+                //									 pShape->GetBody()->ApplyForce(impulse, impulsePos);
+                
+                // electrodruid: Bodies with low mass don't float, they just spin too
+                // fast because of low rotational inertia. As well as fudging for the
+                // spinning, try to add buoyancy by adding a force to negate (some of)
+                // the gravity affecting the body. This needs to be tuned properly
+                // for different bodies
+//                b2Vec2 buoyancy = -m_world->GetGravity();
+                b2Vec2 buoyancy = b2Vec2(0, 10.f);
+                const float buoyancyAdjuster = 0.f;
+                buoyancy *= buoyancyAdjuster;
+                
+                fixture->GetBody()->ApplyForce(buoyancy, fixture->GetBody()->GetPosition());
+                
+                // move the particles away from the body
 #ifdef VERLET_INTEGRATION
-                    SeparateParticleFromBody(particleIdx, nearestPos, normal);
+                SeparateParticleFromBody(particleIdx, nearestPos, normal, liquid);
 #else
-                    liquid[particleIdx].mVelocity -= impulse;
-                    liquid[particleIdx].mVelocity += pointVelocityAbsolute;
+                liquid[particleIdx].mVelocity -= impulse;
+                liquid[particleIdx].mVelocity += pointVelocityAbsolute;
 #endif
-                }
             }
         }
     }
+    return true;
 }
 
-*/
+bool QueryWorldPostIntersect::ReportFixture(b2Fixture *fixture) {
+    int numParticles = hashGridList[x][y].GetSize();
+    hashGridList[x][y].ResetIterator();
+
+    for(int i = 0; i < numParticles; i++)
+    {
+        int particleIdx = hashGridList[x][y].GetNext();
+        
+        b2Vec2 particlePos = liquid[particleIdx].mPosition;
+        if(fixture->GetBody()->GetType() == b2_dynamicBody)
+        {
+            b2Vec2 nearestPos(0,0);
+            b2Vec2 normal(0,0);
+            bool inside = ParticleSolidCollision(fixture, particlePos, nearestPos, normal);
+            
+            if (inside)
+            {
+                SeparateParticleFromBody(particleIdx, nearestPos, normal, liquid);
+            }
+        }
+    }
+    return true;
+}
 
 @implementation SPHNode
 
@@ -176,16 +194,25 @@ inline int hashY(float y)
 -(id)init
 {
     if (self = [super init]) {
-        rad = 0.5f;
-        visc = 0.004f;
+        srandom(time(NULL));
+        
+        rad = 0.6f;
+        visc = 0.002f;
         idealRad = 50.0f;
+        totalMass = 30.f;
+        boxWidth = 1.f;
+        boxHeight = 1.f;
         self.anchorPoint = ccp(0, 0);
         self.position = ccp(240,160);
         
-        particle_sprites = [CCSpriteBatchNode batchNodeWithFile:@"blue_circle.png"];
+        self.isAccelerometerEnabled = YES;
+        
+        particle_sprites = [CCSpriteBatchNode batchNodeWithFile:@"dot.png"];
         [self addChild:particle_sprites];
         
         [self createStaticGeometry];
+        intersectQueryCallback = new QueryWorldInteractions(hashGridList, liquid);
+        eulerIntersectQueryCallback = new QueryWorldPostIntersect(hashGridList, liquid);
         
         [self scheduleUpdate];
     }
@@ -234,8 +261,8 @@ inline int hashY(float y)
     ground->CreateFixture(&gFix);
     
     // electrodruid: the stopper - uncomment this if you want to have a pool that the fluid settles in
-    //  	sd.SetAsBox(0.3f,2.0f,b2Vec2(-4.5f,-2.0f),0.0f);
-    //  	ground->CreateShape(&sd);
+//  	sd.SetAsBox(0.3f,2.0f,b2Vec2(-4.5f,-2.0f),0.0f);
+//  	ground->CreateFixture(&gFix);
     
     b2CircleShape cd;
     cd.m_radius = 0.5f;
@@ -262,7 +289,7 @@ inline int hashY(float y)
 		liquid[i].mRestitution = 0.4f;
 		liquid[i].mFriction = 0.0f;
         
-        CCSprite *sp = [CCSprite spriteWithFile:@"blue_circle.png"];
+        CCSprite *sp = [CCSprite spriteWithFile:@"dot.png"];
         [particle_sprites addChild:sp];
         
         liquid[i].sp = sp;
@@ -275,12 +302,13 @@ inline int hashY(float y)
 	shape.SetAsBox(b2Random(0.3f,0.7f), b2Random(0.3f,0.7f));
 	
 	// electrodruid: Rigid body density appears to be a problem for particle vs. rigid interactions.
-	// Although theoretically a low density should make a body float, it never floats without my gravity
+	// Although theoretically a low density should make a body float, it never floats without my gravity 
 	// fudge, and low densities mean low rotational inertia which means crazy spinning bodies
     
     //	polyDef.density = 1.0f;
-	polyDef.density = 3.0f;
+	polyDef.density = 4.0f;
 	b2BodyDef bodyDef;
+    bodyDef.type = b2_dynamicBody;
 	bodyDef.position = b2Vec2(0.0f,25.0f);
     
 	// electrodruid: As well as the above note about density, some angular damping seems to help with the
@@ -313,7 +341,14 @@ inline int hashY(float y)
 -(void)dealloc
 {
 //	clearHashGrid();
+    delete m_world;
+    delete intersectQueryCallback;
     [super dealloc];
+}
+
+-(void)accelerometer:(UIAccelerometer *)accelerometer didAccelerate:(UIAcceleration *)acceleration
+{
+    m_world->SetGravity(b2Vec2(-10.f * acceleration.y, 10.f * acceleration.x));
 }
 
 
@@ -325,7 +360,7 @@ inline int hashY(float y)
 	[self hashLocations];
 	// Accumulate forces and apply constraints
 	[self applyLiquidConstraint:dt];
-//	processWorldInteractions(dt);
+    [self processWorldInteractions:dt];
     
 	// Update fluid positions
 	[self stepFluidParticles:dt];
@@ -341,22 +376,28 @@ inline int hashY(float y)
 #else
 	
 	// Update positions, and hash them
-	stepFluidParticles(dt);
-	hashLocations();
+//	stepFluidParticles(dt);
+    [self stepFluidParticles:dt];
+//	hashLocations();
+    [self hashLocations];
     
 	// Accumulate forces
-	applyLiquidConstraint(dt);
-	processWorldInteractions(dt);
+	[self applyLiquidConstraint:dt];
+//    applyLiquidConstraint(dt);
+//	processWorldInteractions(dt);
+    [self processWorldInteractions:dt];
     
-	dampenLiquid();
+    [self dampenLiquid];
+//	dampenLiquid();
     
-	checkBounds();
+    [self checkBounds];
+//	checkBounds();
     
 	// Update box2d positions
 	m_world->Step(dt, 8, 3);
     
 	// Resolve any remaining intersections
-	resolveIntersections(dt);
+	[self resolveIntersections:dt];
 #endif
 }
 
@@ -502,7 +543,8 @@ inline int hashY(float y)
 					vlen[a] = b2Sqrt(vlensqr);
 					if (vlen[a] < b2_linearSlop)
 					{
-						vlen[a] = idealRad-.01f;
+//						vlen[a] = idealRad-.01f;
+                        vlen[a] = b2_linearSlop;
 					}
 					float oneminusq = 1.0f-(vlen[a] / idealRad);
 					p = (p + oneminusq*oneminusq);
@@ -602,7 +644,7 @@ inline int hashY(float y)
 		polyShape.SetAsBox(b2Random(0.3f,0.7f), b2Random(0.3f,0.7f));
 		
         b2FixtureDef fixDef;
-        fixDef.density = 1.0f;
+        fixDef.density = 4.0f;
         fixDef.shape = &polyShape;
         
         b2BodyDef bodyDef;
@@ -623,7 +665,7 @@ inline int hashY(float y)
 	}
 }
 
-/*
+
 
 // Handle interactions with the world
 -(void)processWorldInteractions:(float)deltaT
@@ -645,125 +687,10 @@ inline int hashY(float y)
 				aabb.lowerBound.Set(minX, minY);
 				aabb.upperBound.Set(maxX, maxY);
                 
-                m_world->QueryAABB(<#b2QueryCallback *callback#>, <#const b2AABB &aabb#>)
-				int numShapes = m_world->Query(aabb, mNeighboursBuffer, nominalNeighbourListLength);
-                
-				if (numShapes > 0)
-				{
-					// electrodruid: Handy debug code to show which grid cells are being considered.
-					// How well this technique will scale depends on a few factors - number (and radius) of the
-					// particles, the size of the grid, the number of shapes in the b2broadphase, but in general
-					// it seems to be quicker to do things this way than to have particles exist in the broadphase
-					// and to test for pairs.
-                    
-                    // 					b2Color red(1.0f, 0.0f, 0.0f);
-                    // 					b2Vec2 v1(minX, maxY);
-                    // 					b2Vec2 v2(maxX, maxY);
-                    // 					b2Vec2 v3(maxX, minY);
-                    // 					b2Vec2 v4(minX, minY);
-                    // 					m_debugDraw.DrawSegment(v1, v2, red);
-                    // 					m_debugDraw.DrawSegment(v2, v3, red);
-                    // 					m_debugDraw.DrawSegment(v3, v4, red);
-                    // 					m_debugDraw.DrawSegment(v4, v1, red);
-                    
-					// Iterate through all the shapes in this cell
-					for (int shapeIdx = 0; shapeIdx < numShapes; ++shapeIdx)
-					{
-						b2Shape* pShape = mNeighboursBuffer[shapeIdx];
-                        
-						int numParticles = hashGridList[x][y].GetSize();
-						hashGridList[x][y].ResetIterator();
-                        
-						// Iterate through all the particles in this cell
-						for(int i = 0; i < numParticles; i++)
-						{
-							int particleIdx = hashGridList[x][y].GetNext();
-                            
-							b2Vec2 particlePos = liquid[particleIdx].mPosition;
-							if(pShape->GetBody()->IsStatic())
-							{
-								b2Vec2 nearestPos(0,0);
-								b2Vec2 normal(0,0);
-                                
-								// electrodruid TODO: moving particles out to the nearest edge in this way
-								// can cause leaking and tunnelling, particularly for high-velocity particles.
-								// Perhaps some kind of approach involving raycasting between the old particle
-								// position and the current one would work better?
-								bool inside = ParticleSolidCollision(pShape, particlePos, nearestPos, normal);
-                                
-								if (inside)
-								{
-									SeparateParticleFromBody(particleIdx, nearestPos, normal);
-								}
-							}
-							else
-							{
-								b2Vec2 nearestPos(0,0);
-								b2Vec2 normal(0,0);
-								bool inside = ParticleSolidCollision(pShape, particlePos, nearestPos, normal);
-                                
-								if (inside)
-								{
-									b2Vec2 particleVelocity = liquid[particleIdx].mVelocity;
-                                    
-									// electrodruid: I think this does need to be here
-									particleVelocity *= deltaT;
-									// electrodruid: not sure if this should be here
-                                    //									particleVelocity *= liquid[particleIdx].mMass;
-                                    
-									// electrodruid: Still not sure exactly what the paper meant by
-									// "intersection position", but taking the current particle position
-									// seems to give the least-bad results
-									b2Vec2 impulsePos = particlePos;
-                                    //									b2Vec2 impulsePos = nearestPos;
-                                    
-									b2Vec2 pointVelocity = pShape->GetBody()->GetLinearVelocityFromWorldPoint(impulsePos);
-									b2Vec2 pointVelocityAbsolute = pointVelocity;
-									// electrodruid: I think this does need to be here
-									pointVelocity *= deltaT;
-                                    
-									b2Vec2 relativeVelocity = particleVelocity - pointVelocity;
-                                    
-									b2Vec2 pointVelNormal = normal;
-									pointVelNormal *= b2Dot(relativeVelocity, normal);
-									b2Vec2 pointVelTangent = relativeVelocity - pointVelNormal;
-                                    
-									// Should be a value between 0.0f and 1.0f
-									const float slipFriction = 0.3f;
-                                    
-									pointVelTangent *= slipFriction;
-									b2Vec2 impulse = pointVelNormal - pointVelTangent;
-                                    
-									// electrodruid: not sure if this should be here
-                                    //									impulse *= deltaT;
-                                    
-									// electrodruid: Don't know if this should be a force or an impulse...
-									pShape->GetBody()->ApplyImpulse(impulse, impulsePos);
-                                    //									 pShape->GetBody()->ApplyForce(impulse, impulsePos);
-                                    
-									// electrodruid: Bodies with low mass don't float, they just spin too
-									// fast because of low rotational inertia. As well as fudging for the
-									// spinning, try to add buoyancy by adding a force to negate (some of)
-									// the gravity affecting the body. This needs to be tuned properly
-									// for different bodies
-									b2Vec2 buoyancy = -m_world->GetGravity();
-									const float buoyancyAdjuster = 0.5f;
-									buoyancy *= buoyancyAdjuster;
-                                    
-									pShape->GetBody()->ApplyForce(buoyancy, pShape->GetBody()->GetPosition());
-                                    
-									// move the particles away from the body
-#ifdef VERLET_INTEGRATION
-									SeparateParticleFromBody(particleIdx, nearestPos, normal);
-#else
-									liquid[particleIdx].mVelocity -= impulse;
-									liquid[particleIdx].mVelocity += pointVelocityAbsolute;
-#endif
-								}
-							}
-						}
-					}
-				}
+                intersectQueryCallback->x = x;
+                intersectQueryCallback->y = y;
+                intersectQueryCallback->deltaT = deltaT;
+                m_world->QueryAABB(intersectQueryCallback, aabb);
 			}
 		}
 	}
@@ -772,14 +699,17 @@ inline int hashY(float y)
 
 // Detect an intersection between a particle and a b2Shape, and also try to suggest the nearest
 // point on the shape to move the particle to, and the shape normal at that point
--(bool)ParticleSolidCollision:(b2Shape*)pShape pos:(b2Vec2&)particlePos nearest:(b2Vec2&)nearestPos normal:(b2Vec2&)impactNormal
+
+bool ParticleSolidCollision(b2Fixture* fixture, b2Vec2& particlePos, b2Vec2& nearestPos, b2Vec2& impactNormal)
 {
-	if (pShape->GetType() == b2Shape::e_circle)
+    const float particleRadius = 0.2f;
+    
+	if (fixture->GetShape()->GetType() == b2Shape::e_circle)
 	{
-		b2CircleShape* pCircleShape = static_cast<b2CircleShape*>(pShape);
-		const b2XForm& xf = pCircleShape->GetBody()->GetXForm();
-		float radius = pCircleShape->GetRadius();
-		b2Vec2 circlePos = xf.position + pCircleShape->GetLocalPosition();
+		b2CircleShape* pCircleShape = static_cast<b2CircleShape*>(fixture->GetShape());
+		const b2Transform& xf = fixture->GetBody()->GetTransform();
+		float radius = pCircleShape->m_radius + particleRadius;
+		b2Vec2 circlePos = xf.p + pCircleShape->m_p;
 		b2Vec2 delta = particlePos - circlePos;
 		if (delta.LengthSquared() > radius * radius)
 		{
@@ -788,34 +718,34 @@ inline int hashY(float y)
         
 		delta.Normalize();
 		delta *= radius;
-		nearestPos = delta + pCircleShape->GetLocalPosition();
+		nearestPos = delta + pCircleShape->m_p;
 		impactNormal = (nearestPos - circlePos);
 		impactNormal.Normalize();
         
 		return true;
 		
 	}
-	else if (pShape->GetType() == b2Shape::e_polygon)
+	else if (fixture->GetShape()->GetType() == b2Shape::e_polygon)
 	{
-		b2PolygonShape* pPolyShape = static_cast<b2PolygonShape*>(pShape);
-		const b2XForm& xf = pPolyShape->GetBody()->GetXForm();
+		b2PolygonShape* pPolyShape = static_cast<b2PolygonShape*>(fixture->GetShape());
+		const b2Transform& xf = fixture->GetBody()->GetTransform();
 		int numVerts = pPolyShape->GetVertexCount();
         
 		b2Vec2 vertices[b2_maxPolygonVertices];
 		b2Vec2 normals[b2_maxPolygonVertices];
         
-        
 		for (int32 i = 0; i < numVerts; ++i)
 		{
-			vertices[i] = b2Mul(xf, pPolyShape->GetVertices()[i]);
-			normals[i] = b2Mul(xf.R, pPolyShape->GetNormals()[i]);
+			vertices[i] = b2Mul(xf, pPolyShape->m_vertices[i]);
+			normals[i] = b2Mul(xf.q, pPolyShape->m_normals[i]);
 		}
         
 		float shortestDistance = 99999.0f;
         
 		for (int i = 0; i < numVerts ; ++i)
 		{
-			float distance = b2Dot(normals[i], b2Vec2(vertices[i] - particlePos));
+            b2Vec2 vertex = vertices[i] + particleRadius * normals[i] - particlePos;
+			float distance = b2Dot(normals[i], vertex);
             
 			if (distance < 0.0f)
 			{
@@ -848,7 +778,7 @@ inline int hashY(float y)
 
 // Move the particle from inside a body to the nearest point outside, and (if appropriate), adjust
 // the particle's velocity
--(void)SeparateParticleFromBody:(int)particleIdx pos:(b2Vec2&)nearestPos normal:(b2Vec2&)normal
+void SeparateParticleFromBody(int particleIdx, b2Vec2& nearestPos, b2Vec2& normal, sParticle *liquid)
 {
 	liquid[particleIdx].mPosition = nearestPos;
     
@@ -878,7 +808,6 @@ inline int hashY(float y)
 	liquid[particleIdx].mVelocity = V;
 #endif
 }
- */
 
 -(void)stepFluidParticles:(float)deltaT
 {
@@ -905,21 +834,28 @@ inline int hashY(float y)
         
 		liquid[i].mOldPosition = liquid[i].mPosition;
 		liquid[i].mPosition += liquid[i].mVelocity;
-        
-        liquid[i].sp.position = ccp(32.f * liquid[i].mPosition.x, 32.f * liquid[i].mPosition.y);
 #else
 		// Old-Skool Euler stuff
-		liquid[i].mVelocity.x += liquid[i].mAcceleration.x * deltaT;
-		liquid[i].mVelocity.y += liquid[i].mAcceleration.y * deltaT;
+        b2Vec2 g = m_world->GetGravity();
+//		liquid[i].mVelocity.x += liquid[i].mAcceleration.x * deltaT;
+//		liquid[i].mVelocity.y += liquid[i].mAcceleration.y * deltaT;
+        liquid[i].mVelocity.x += g.x * deltaT;
+		liquid[i].mVelocity.y += g.y * deltaT;
+        
 		
 		liquid[i].mPosition.x += liquid[i].mVelocity.x * deltaT;
 		liquid[i].mPosition.y += liquid[i].mVelocity.y * deltaT;
 #endif
+        
+        liquid[i].sp.position = ccp(32.f * liquid[i].mPosition.x, 32.f * liquid[i].mPosition.y);
+//        liquid[i].sp.rotation = -1.f * CC_RADIANS_TO_DEGREES(ccpToAngle(ccp(liquid[i].mVelocity.x, liquid[i].mVelocity.y)));
+//        liquid[i].sp.scaleX = clampf(liquid[i].mVelocity.LengthSquared() * 10.f, 1.f, 4.f);
 	}
 }
-/*
+
 -(void)resolveIntersections:(float)deltaT
 {
+	// Iterate through the grid, and do an AABB test for every grid containing particles
 	for (int x = 0; x < hashWidth; ++x)
 	{
 		for (int y = 0; y < hashWidth; ++y)
@@ -936,42 +872,16 @@ inline int hashY(float y)
 				aabb.lowerBound.Set(minX, minY);
 				aabb.upperBound.Set(maxX, maxY);
                 
-				int numShapes = m_world->Query(aabb, mNeighboursBuffer, nominalNeighbourListLength);
-                
-				if (numShapes > 0)
-				{
-					for (int shapeIdx = 0; shapeIdx < numShapes; ++shapeIdx)
-					{
-						b2Shape* pShape = mNeighboursBuffer[shapeIdx];
-                        
-						int numParticles = hashGridList[x][y].GetSize();
-						hashGridList[x][y].ResetIterator();
-                        
-						for(int i = 0; i < numParticles; i++)
-						{
-							int particleIdx = hashGridList[x][y].GetNext();
-                            
-							b2Vec2 particlePos = liquid[particleIdx].mPosition;
-							if(!pShape->GetBody()->IsStatic())
-							{
-								b2Vec2 nearestPos(0,0);
-								b2Vec2 normal(0,0);
-								bool inside = ParticleSolidCollision(pShape, particlePos, nearestPos, normal);
-                                
-								if (inside)
-								{
-									SeparateParticleFromBody(particleIdx, nearestPos, normal);
-								}
-							}
-						}
-					}
-				}
+                eulerIntersectQueryCallback->x = x;
+                eulerIntersectQueryCallback->y = y;
+                eulerIntersectQueryCallback->deltaT = deltaT;
+                m_world->QueryAABB(eulerIntersectQueryCallback, aabb);
 			}
 		}
 	}
 }
 
-*/
+
 
 
 @end

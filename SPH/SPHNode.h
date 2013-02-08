@@ -17,7 +17,7 @@
 
 // Everything is just a copy-paste of the ElectroDruid code from this post: http://www.box2d.org/forum/viewtopic.php?f=3&t=574&sid=0f208bac89ee07a05d5a524ef3b652cc&start=70
 
-#define VERLET_INTEGRATION
+//#define VERLET_INTEGRATION
 
 #define nParticles		(500)
 #define hashWidth		(40)
@@ -44,10 +44,44 @@ struct sParticle
 	float mFriction;
 };
 
-@interface SPHNode : CCNode {
+class QueryWorldInteractions : public b2QueryCallback {
+public:
+    QueryWorldInteractions(cFluidHashList (*grid)[hashHeight], sParticle *particles) {
+        hashGridList = grid;
+        liquid = particles;
+    };
+    
+    bool ReportFixture(b2Fixture* fixture);
+    int x, y;
+    float deltaT;
+    
+protected:
+    cFluidHashList (*hashGridList)[hashHeight];
+    sParticle *liquid;
+};
+
+class QueryWorldPostIntersect : public b2QueryCallback {
+public:
+    QueryWorldPostIntersect(cFluidHashList (*grid)[hashHeight], sParticle *particles) {
+        hashGridList = grid;
+        liquid = particles;
+    };
+    
+    bool ReportFixture(b2Fixture* fixture);
+    int x, y;
+    float deltaT;
+    
+protected:
+    cFluidHashList (*hashGridList)[hashHeight];
+    sParticle *liquid;
+};
+
+@interface SPHNode : CCLayer {
     CCSpriteBatchNode *particle_sprites;
     
     b2World *m_world;
+    QueryWorldInteractions *intersectQueryCallback;
+    QueryWorldPostIntersect *eulerIntersectQueryCallback;
     
 	GLESDebugDraw *m_debugDraw;		// strong ref
     
@@ -56,7 +90,7 @@ struct sParticle
     
 	float boxWidth;
 	float boxHeight;
-        
+    
 	float rad;
 	float visc;
 	float idealRad;
